@@ -11,4 +11,4 @@
 2. 웹 앱을 등록하고 `firebaseConfig`를 `index.html`의 `FIREBASE_CONFIG`에 넣습니다.
 3. GitHub Settings → Pages에서 `main` 브랜치 / `(root)`로 배포합니다.
 
-진행자 모드는 진행자 링크로 연 탭에서만 유지됩니다. 같은 기기라도 보기 링크로 열면 보기 전용입니다.
+주소에 `?host=`가 있을 때만 진행자 모드입니다. 같은 기기라도 보기 링크로 열면 보기 전용입니다.

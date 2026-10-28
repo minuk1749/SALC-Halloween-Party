@@ -614,15 +614,12 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
   let viewOnly = false;       // anyone without the host key, connected or not
   const isSpectator = () => viewOnly;
 
-  // The link decides the role: ?host=<key> (or the older #host=<key>) is the scorekeeper.
-  // The key is kept per tab only, so a refresh stays host but the plain link is always a viewer.
+  // The link alone decides the role: ?host=<key> (or the older #host=<key>) is the scorekeeper.
+  // The key stays in the address bar so "open in Safari" and refresh carry it along.
   function readHostKey() {
-    const m = (location.search + location.hash).match(/host=([A-Za-z0-9_-]+)/);
     try { localStorage.removeItem(HOST_KEY_STORE); } catch (e) {}   // older builds kept it per device
-    try { if (m) sessionStorage.setItem(HOST_KEY_STORE, m[1]); } catch (e) {}
-    // keep the key off the address bar when the screen is projected
-    if (location.search || location.hash) history.replaceState(null, '', location.pathname);
-    try { return sessionStorage.getItem(HOST_KEY_STORE) || (m ? m[1] : ''); } catch (e) { return m ? m[1] : ''; }
+    const m = (location.search + location.hash).match(/host=([A-Za-z0-9_-]+)/);
+    return m ? m[1] : '';
   }
 
   async function connectLive() {
@@ -686,7 +683,6 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
         writing = false;
         writeQueued = false;
         live.host = false;
-        try { sessionStorage.removeItem(HOST_KEY_STORE); } catch (err) {}
         setSpectator(true);
         setLiveTag('진행자 링크가 맞지 않아요 · 보기 전용', true);
         live.refresh();
