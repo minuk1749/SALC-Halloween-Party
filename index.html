@@ -549,6 +549,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
 
   let state;
   let draft = null;          // round in progress: relay { step, team, t, w } or multi { picks }
+  let remoteRelayPreview = null; // the scorekeeper's current word, shared only at the judging step
   let revealCount = 0;       // final ranking rows revealed, counted from last place
   let lockUntil = 0;         // swallows double taps right after a result is recorded
   let confirmReset = false;
@@ -666,6 +667,18 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     if (on) { closeIntro(); if (!$('#modal').hidden) renderTally(); }
     render(false);
   }
+  function readRelayPreview(preview, pos) {
+    if (!preview || pos.screen !== 'game' || !GAMES[pos.g].relay
+      || preview.g !== pos.g || preview.r !== pos.r
+      || !Number.isInteger(preview.team) || preview.team < 0 || preview.team >= DEFAULT_TEAMS.length
+      || !Number.isInteger(preview.t) || preview.t < 0 || preview.t >= TOPICS.length
+      || !Number.isInteger(preview.w) || preview.w < 0 || preview.w >= TOPICS[preview.t].words.length) return null;
+    return { g: pos.g, r: pos.r, team: preview.team, t: preview.t, w: preview.w };
+  }
+  function relayPreview() {
+    if (!draft || draft.step !== 'judge') return null;
+    return readRelayPreview({ ...draft, g: state.pos.g, r: state.pos.r }, state.pos);
+  }
   function pushLive() {
     if (!live || !live.host) return;
     clearTimeout(writeTimer);
@@ -677,7 +690,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     writing = true;
     try {
       // stored as one JSON string: the database drops nulls and reshapes arrays
-      await live.write({ json: JSON.stringify({ state, reveal: revealCount }) });
+      await live.write({ json: JSON.stringify({ state, reveal: revealCount, relayPreview: relayPreview() }) });
     } catch (e) {
       if (/permission/i.test(String((e && (e.code || e.message)) || ''))) {
         writing = false;
@@ -701,12 +714,15 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     if (!body || !isValid(body.state)) return;
     const next = normalize(body.state);
     const reveal = Number.isInteger(body.reveal) ? body.reveal : 0;
-    if (JSON.stringify(next) === JSON.stringify(state) && reveal === revealCount) return;
+    const preview = live.host ? null : readRelayPreview(body.relayPreview, next.pos);
+    const previewChanged = !live.host && JSON.stringify(preview) !== JSON.stringify(remoteRelayPreview);
+    if (JSON.stringify(next) === JSON.stringify(state) && reveal === revealCount && !previewChanged) return;
     const old = state;
     const posChanged = JSON.stringify(old.pos) !== JSON.stringify(next.pos);
     const revealChanged = reveal !== revealCount;
     state = next;
     revealCount = reveal;
+    remoteRelayPreview = preview;
     saveLocal();
     if (posChanged) draft = null;
     render(posChanged);
@@ -852,6 +868,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     else if (draft.step === 'word') draft.step = 'topic';
     else draft.step = 'word';
     render(true);
+    pushLive();
   }
 
   // ---------- rendering ----------
@@ -993,6 +1010,19 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     const res = state.results[g][r];
     const pts = GAMES[g].points[r];
     const head = `<div class="stage-head">${trackHTML(g)}${stakeHTML(g, r)}</div>`;
+    if (isSpectator()) {
+      const preview = readRelayPreview(remoteRelayPreview, state.pos);
+      if (preview) {
+        const topic = TOPICS[preview.t];
+        return `${head}
+          <div class="word-card">
+            <p class="wc-meta"><span class="chip" style="${tc(preview.team)}">${esc(teamName(preview.team))}</span><span class="wc-topic">${topic.name}</span></p>
+            <p class="wc-word">${esc(topic.words[preview.w])}</p>
+          </div>
+          <p class="prompt">진행자가 성공·실패를 판정하고 있어요</p>`;
+      }
+      if (!res) return `${head}<p class="prompt">진행자가 제시어를 고르고 있어요</p>`;
+    }
     if (!draft && res) {
       const topic = TOPICS[res.t];
       return `${head}
@@ -1210,10 +1240,10 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
       case 'jump-missing': { const m = missingRounds()[0]; if (m) goTo({ screen: 'game', g: m.g, r: m.r }); break; }
       case 'relay-team': if (!locked(300)) { draft = { step: 'topic', team: +el.dataset.team }; render(true); } break;
       case 'relay-topic': if (!locked(300)) { draft.t = +el.dataset.topic; draft.step = 'word'; render(true); } break;
-      case 'relay-word': if (!locked(300)) { draft.w = +el.dataset.word; draft.step = 'judge'; render(true); } break;
+      case 'relay-word': if (!locked(300)) { draft.w = +el.dataset.word; draft.step = 'judge'; render(true); pushLive(); } break;
       case 'relay-judge': recordRelay(el.dataset.ok === '1'); break;
       case 'relay-back': relayBack(); break;
-      case 'relay-redo': draft = { step: 'team' }; render(true); break;
+      case 'relay-redo': draft = { step: 'team' }; render(true); pushLive(); break;
       case 'tally-open': openTally(); break;
       case 'modal-close': closeModal(); break;
       case 'backdrop': if (e.target === el) closeModal(); break;
