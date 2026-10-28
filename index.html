@@ -542,6 +542,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     { name: '직업', words: ['아이돌', '어부', '발레리나'] },
   ];
   const DEFAULT_TEAMS = ['1팀', '2팀', '3팀', '4팀', '5팀', '6팀'];
+  const QUIZ_GAME = GAMES.findIndex((game) => game.name === '상식 퀴즈');
   const STORE_KEY = 'halloween-candy-board-v1';
   const CANDY = '<svg class="ic-candy" viewBox="0 0 64 32" aria-hidden="true"><use href="#i-candy"/></svg>';
   const ARROW = '<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-arrow"/></svg>';
@@ -573,7 +574,14 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
 
   // ---------- state ----------
   const freshResults = () => GAMES.map((g) => g.points.map(() => null));
-  const freshState = (teams) => ({ teams: teams || DEFAULT_TEAMS.slice(), results: freshResults(), pos: { screen: 'setup' }, resume: null });
+  const freshState = (teams) => ({ teams: teams || DEFAULT_TEAMS.slice(), results: freshResults(), pos: { screen: 'setup' }, resume: null, hideViewerTally: false });
+
+  function reachedQuiz(pos) {
+    return !!pos && (pos.screen === 'final' || (pos.screen === 'game' && pos.g >= QUIZ_GAME));
+  }
+  function viewerTallyHidden() {
+    return isSpectator() && (state.hideViewerTally || reachedQuiz(state.pos));
+  }
 
   function validPos(p) {
     if (!p || typeof p !== 'object') return false;
@@ -589,6 +597,8 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
   }
   // records saved before multi-select stored a single team number
   function normalize(s) {
+    s.hideViewerTally = s.hideViewerTally === true || reachedQuiz(s.pos) || reachedQuiz(s.resume)
+      || s.results.slice(QUIZ_GAME).some((rounds) => rounds.some((res) => res != null));
     GAMES.forEach((game, g) => {
       if (game.multi) s.results[g] = s.results[g].map((x) => (x == null ? null : Array.isArray(x) ? x : [x]));
     });
@@ -822,6 +832,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     if (to.screen === 'setup' && from.screen !== 'setup') state.resume = from;
     if (to.screen === 'final' && from.screen !== 'final') revealCount = 0;
     state.pos = to;
+    if (reachedQuiz(to)) state.hideViewerTally = true;
     draft = null;
     confirmWipe = false;
     save();
@@ -900,6 +911,8 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
       marquee.innerHTML = `<h1>SALC 할로윈 파티 <span class="emoji">🎃</span></h1>`;
     }
     $('#tallyBtn').innerHTML = `${CANDY}<span>${p.screen === 'final' ? '전체 집계' : '중간 집계'}</span>`;
+    $('#tallyBtn').hidden = viewerTallyHidden();
+    if (viewerTallyHidden() && !$('#modal').hidden) closeModal();
   }
 
   function renderStage(animate) {
@@ -1094,9 +1107,9 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     const rows = order.map((o, idx) => {
       const shown = idx >= n - revealCount;
       if (!shown) {
-        return `<li class="rank-row veiled"><span class="rk">${o.rank}<small>위</small></span><span class="nm">???</span><span class="bar"><i></i></span><span class="amt">?</span></li>`;
+        return `<li class="rank-row veiled"><span class="rk">${idx + 1}<small>위</small></span><span class="nm">???</span><span class="bar"><i></i></span><span class="amt">?</span></li>`;
       }
-      const cls = `rank-row${o.rank === 1 ? ' first' : ''}${idx === n - revealCount ? ' just' : ''}`;
+      const cls = `rank-row${o.rank === 1 ? ' first' : ''}${o.rank === order[n - revealCount]?.rank ? ' just' : ''}`;
       return `<li class="${cls}" style="${tc(o.i)};--w:${max ? (o.t / max) * 100 : 0}%"><span class="rk">${o.rank}<small>위</small></span><span class="nm"><i class="swatch"></i>${esc(teamName(o.i))}</span><span class="bar"><i></i></span><span class="amt">${o.t}${CANDY}</span></li>`;
     }).join('');
     let champion = '';
@@ -1104,10 +1117,9 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
       const winners = order.filter((o) => o.rank === 1);
       champion = `<div class="champion"><p class="eyebrow">${winners.length > 1 ? '공동 우승' : '우승'}</p><p class="champ-name">${winners.map((w) => `<span style="${tc(w.i)}">${esc(teamName(w.i))}</span>`).join(' · ')}</p><p class="champ-sub">사탕 ${CANDY}${winners[0].t}개</p></div>`;
     }
-    const nextRow = order[n - 1 - revealCount];
     const actions = allShown
       ? `<button type="button" class="btn-ghost" data-action="tally-open">게임별 점수 보기</button><button type="button" class="link" data-action="reveal-reset">처음부터 다시 공개</button>`
-      : `<button type="button" class="cta" data-action="reveal">${nextRow.rank}위 공개</button><button type="button" class="link" data-action="reveal-all">한 번에 모두 공개</button>`;
+      : `<button type="button" class="cta" data-action="reveal">${n - revealCount}위 공개</button><button type="button" class="link" data-action="reveal-all">한 번에 모두 공개</button>`;
     const notice = missing.length
       ? `<p class="notice">기록되지 않은 라운드가 ${missing.length}개 있어요 <button type="button" class="link" data-action="jump-missing">첫 빈 라운드로 가기</button></p>`
       : '';
@@ -1140,6 +1152,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
   }
   function renderTally() { $('#sheet').innerHTML = tallyHTML(); }
   function openTally() {
+    if (viewerTallyHidden()) return;
     confirmReset = false;
     lastFocus = document.activeElement;
     renderTally();
@@ -1192,9 +1205,11 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     setTimeout(() => box.remove(), 6000);
   }
   function revealNext() {
-    const n = DEFAULT_TEAMS.length;
+    const { order } = standings();
+    const n = order.length;
     if (revealCount >= n) return;
-    revealCount++;
+    const rank = order[n - 1 - revealCount].rank;
+    do { revealCount++; } while (revealCount < n && order[n - 1 - revealCount].rank === rank);
     renderStage(false);
     pushLive();
     if (revealCount === n) confetti();
