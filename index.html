@@ -568,7 +568,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
 
   function relaySelection(g, r) {
     if (isSpectator()) return readRelayPreview(remoteRelayPreview, state.pos) || state.results[g][r];
-    if (draft) return ['word', 'judge'].includes(draft.step) ? draft : null;
+    if (draft) return draft.step === 'judge' ? draft : null;
     return state.results[g][r];
   }
 
@@ -892,13 +892,23 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     showToast([draft.team], ok ? relayPoints(draft.t) : 0, ok);
     goTo(nextPos(state.pos));
   }
+  function drawRelayWord(t) {
+    if (!draft || draft.step !== 'topic' || !Number.isInteger(t) || !TOPICS[t]) return;
+    const { g, r } = state.pos;
+    const used = usedWords(g, r);
+    const available = TOPICS[t].words.map((_, w) => w).filter((w) => !used[t + '-' + w]);
+    if (!available.length || locked(300)) return;
+    const w = available[Math.floor(Math.random() * available.length)];
+    draft = { step: 'judge', team: draft.team, t, w };
+    render(true);
+    pushLive();
+  }
   function relayBack() {
     if (!draft || !draft.step) return;
     const res = state.results[state.pos.g][state.pos.r];
     if (draft.step === 'team') { if (res) draft = null; else return; }
     else if (draft.step === 'topic') draft = { step: 'team' };
-    else if (draft.step === 'word') draft.step = 'topic';
-    else draft.step = 'word';
+    else draft = { step: 'topic', team: draft.team };
     render(true);
     pushLive();
   }
@@ -1061,7 +1071,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
           </div>
           <p class="prompt">진행자가 성공·실패를 판정하고 있어요</p>`;
       }
-      if (!res) return `${head}<p class="prompt">진행자가 제시어를 고르고 있어요</p>`;
+      if (!res) return `${head}<p class="prompt">진행자가 팀과 주제를 고르고 있어요</p>`;
     }
     if (!draft && res) {
       const topic = TOPICS[res.t];
@@ -1074,7 +1084,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
         <div class="setup-actions"><button type="button" class="btn-ghost" data-action="relay-redo">다시 기록하기</button><button type="button" class="link" data-action="clear">이 라운드 기록 지우기</button></div>`;
     }
     if (!draft) draft = { step: 'team' };
-    const steps = [['team', '팀'], ['topic', '주제'], ['word', '제시어'], ['judge', '성공/실패']];
+    const steps = [['team', '팀'], ['topic', '주제'], ['judge', '제시어 · 성공/실패']];
     const at = steps.findIndex((s) => s[0] === draft.step);
     const stepper = `<ol class="stepper">${steps.map(([, label], i) => `<li class="${i < at ? 'past' : i === at ? 'on' : ''}"${i === at ? ' aria-current="step"' : ''}>${i + 1}. ${label}</li>`).join('')}</ol>`;
     const used = usedWords(g, r);
@@ -1084,20 +1094,12 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
       body = `<div class="team-grid">${DEFAULT_TEAMS.map((_, i) => teamTile(i, 'relay-team')).join('')}</div>
         ${res ? '<button type="button" class="link" data-action="relay-back">← 원래 기록 그대로 두기</button>' : ''}`;
     } else if (draft.step === 'topic') {
-      body = `<p class="prompt">${chip}</p>
+      body = `<p class="prompt">${chip} 주제를 고르면 남은 제시어가 무작위로 나와요</p>
         <div class="choice-grid topics">${TOPICS.map((t, ti) => {
           const left = t.words.filter((_, wi) => !used[ti + '-' + wi]).length;
           return `<button type="button" class="choice" data-action="relay-topic" data-topic="${ti}" data-hotkey="${ti + 1}"${left ? '' : ' disabled'}><span class="key" aria-hidden="true">${ti + 1}</span><span>${t.name}</span><span class="pips" aria-hidden="true">${t.words.map((_, wi) => `<i class="pip${used[ti + '-' + wi] ? ' used' : ''}"></i>`).join('')}</span><span class="sub">${left ? `남은 제시어 ${left}개` : '제시어를 모두 썼어요'}</span></button>`;
         }).join('')}</div>
         <button type="button" class="link" data-action="relay-back">← 팀 다시 고르기</button>`;
-    } else if (draft.step === 'word') {
-      const topic = TOPICS[draft.t];
-      body = `<p class="prompt">${chip}<span class="chip ghost">${topic.name}</span></p>
-        <div class="choice-grid words">${topic.words.map((w, wi) => {
-          const u = used[draft.t + '-' + wi];
-          return `<button type="button" class="choice word${w.length > 8 ? ' long' : ''}" data-action="relay-word" data-word="${wi}" data-hotkey="${wi + 1}"${u ? ' disabled' : ''}><span class="key" aria-hidden="true">${wi + 1}</span><span class="w-text">${esc(w)}</span>${u ? `<span class="sub">${u.r + 1}라운드 ${esc(teamName(u.team))} 사용</span>` : ''}</button>`;
-        }).join('')}</div>
-        <button type="button" class="link" data-action="relay-back">← 주제 다시 고르기</button>`;
     } else {
       const topic = TOPICS[draft.t];
       body = `<div class="judge">
@@ -1106,7 +1108,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
             <button type="button" class="judge-btn ok" data-action="relay-judge" data-ok="1">성공<small>${CANDY}+${pts}사탕</small></button>
             <button type="button" class="judge-btn no" data-action="relay-judge" data-ok="0">실패<small>사탕 없음</small></button>
           </div>
-          <button type="button" class="link" data-action="relay-back">← 제시어 다시 고르기</button>
+          <button type="button" class="link" data-action="relay-back">← 주제 다시 고르기</button>
         </div>`;
     }
     return head + stepper + body;
@@ -1281,8 +1283,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
       case 'jump-game': goTo({ screen: 'game', g: +el.dataset.g, r: 0 }); break;
       case 'jump-missing': { const m = missingRounds()[0]; if (m) goTo({ screen: 'game', g: m.g, r: m.r }); break; }
       case 'relay-team': if (!locked(300)) { draft = { step: 'topic', team: +el.dataset.team }; render(true); } break;
-      case 'relay-topic': if (!locked(300)) { draft.t = +el.dataset.topic; draft.step = 'word'; render(true); } break;
-      case 'relay-word': if (!locked(300)) { draft.w = +el.dataset.word; draft.step = 'judge'; render(true); pushLive(); } break;
+      case 'relay-topic': drawRelayWord(+el.dataset.topic); break;
       case 'relay-judge': recordRelay(el.dataset.ok === '1'); break;
       case 'relay-back': relayBack(); break;
       case 'relay-redo': draft = { step: 'team' }; render(true); pushLive(); break;
