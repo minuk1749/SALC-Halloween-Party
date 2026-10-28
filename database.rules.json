@@ -1,0 +1,13 @@
+{
+  "rules": {
+    "live": {
+      ".read": true,
+      ".write": "newData.parent().child('gate/key').val() === '__HOST_KEY__' && newData.parent().child('gate/t').val() === now",
+      ".validate": "newData.child('json').isString() && newData.child('json').val().length < 200000"
+    },
+    "gate": {
+      ".read": false,
+      ".write": "newData.child('key').val() === '__HOST_KEY__' && newData.child('t').val() === now"
+    }
+  }
+}
