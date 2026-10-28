@@ -528,12 +528,12 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
   const RELAY_POINTS = 10;
   const GAMES = [
     // multi: several teams can earn candy in one round; the next button records the picked teams
-    { name: '쪼개진 과자', multi: true, points: [10, 10, 10] },
+    { name: '쪼개진 과자', multi: true, points: [10] },
     { name: '빙고판 글씨', points: [10, 10, 20] },
     { name: '딸기 바나나 사과', points: [20] },
     { name: '릴레이 몸으로 말해요', relay: true, points: Array(12).fill(RELAY_POINTS) },
     { name: '상식 퀴즈', multi: true, points: Array(16).fill(10) },
-    { name: '상자 물건', multi: true, points: [10, 10, 10] },
+    { name: '상자 물건', multi: true, points: [10, 10, 20] },
   ];
   const TOPICS = [
     { name: '감정', points: 20, words: ['애틋함', '현타', '질투'] },
@@ -595,6 +595,19 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
       && s.results.every((a, g) => Array.isArray(a) && a.length === roundCount(g))
       && validPos(s.pos);
   }
+  // Keep the first round and the other games when loading the former three-round game 1.
+  function migrateState(s) {
+    if (s && Array.isArray(s.results) && Array.isArray(s.results[0]) && s.results[0].length === 3) {
+      s.results[0] = s.results[0].slice(0, roundCount(0));
+      for (const key of ['pos', 'resume']) {
+        const p = s[key];
+        if (p && p.screen === 'game' && p.g === 0 && Number.isInteger(p.r) && p.r >= roundCount(0) && p.r < 3) {
+          s[key] = { screen: 'game', g: 1, r: 0 };
+        }
+      }
+    }
+    return s;
+  }
   // records saved before multi-select stored a single team number
   function normalize(s) {
     s.hideViewerTally = s.hideViewerTally === true || reachedQuiz(s.pos) || reachedQuiz(s.resume)
@@ -605,7 +618,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     return s;
   }
   function load() {
-    try { const s = JSON.parse(localStorage.getItem(STORE_KEY)); if (isValid(s)) return normalize(s); } catch (e) {}
+    try { const s = migrateState(JSON.parse(localStorage.getItem(STORE_KEY))); if (isValid(s)) return normalize(s); } catch (e) {}
     return freshState();
   }
   function saveLocal() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {} }
@@ -729,7 +742,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     if (live.host && (writing || writeQueued || writeTimer)) return;
     let body;
     try { body = JSON.parse(val.json); } catch (e) { return; }
-    if (!body || !isValid(body.state)) return;
+    if (!body || !isValid(migrateState(body.state))) return;
     const next = normalize(body.state);
     const reveal = Number.isInteger(body.reveal) ? body.reveal : 0;
     const preview = live.host ? null : readRelayPreview(body.relayPreview, next.pos);
