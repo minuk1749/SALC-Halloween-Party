@@ -8,7 +8,7 @@
 ## 설정
 
 1. Firebase 콘솔에서 Realtime Database를 만들고, `database.rules.json`의 `__HOST_KEY__`를 진행자 키로 바꿔서 규칙 탭에 붙여넣습니다. 키가 들어간 규칙은 이 저장소에 올리지 마세요.
-2. 웹 앱을 등록하고 `firebaseConfig`를 `firebase-config.js`에 넣습니다.
+2. 웹 앱을 등록하고 `firebaseConfig`를 `index.html`의 `FIREBASE_CONFIG`에 넣습니다.
 3. GitHub Settings → Pages에서 `main` 브랜치 / `(root)`로 배포합니다.
 
 진행자 기기에서 `#view`로 열면 저장된 진행자 키가 지워지고 보기 전용이 됩니다.
