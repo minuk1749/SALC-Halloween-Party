@@ -593,7 +593,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
   function save() { saveLocal(); pushLive(); }
 
   // ---------- live sharing (Firebase Realtime Database) ----------
-  // The scorekeeper opens the host link (#host=<key>) and writes the whole board to /live;
+  // The scorekeeper opens the host link (?host=<key>) and writes the whole board to /live;
   // everyone else follows it read-only. The database rules accept a write only when it
   // carries the key, so the key lives in the host link and the rules, never in this file.
   const HOST_KEY_STORE = 'salc-host-key';
@@ -614,15 +614,15 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
   let viewOnly = false;       // anyone without the host key, connected or not
   const isSpectator = () => viewOnly;
 
+  // The link decides the role: ?host=<key> (or the older #host=<key>) is the scorekeeper.
+  // The key is kept per tab only, so a refresh stays host but the plain link is always a viewer.
   function readHostKey() {
-    const m = location.hash.match(/host=([A-Za-z0-9_-]+)/);
-    try {
-      if (m) localStorage.setItem(HOST_KEY_STORE, m[1]);
-      else if (location.hash === '#view') localStorage.removeItem(HOST_KEY_STORE);
-    } catch (e) {}
+    const m = (location.search + location.hash).match(/host=([A-Za-z0-9_-]+)/);
+    try { localStorage.removeItem(HOST_KEY_STORE); } catch (e) {}   // older builds kept it per device
+    try { if (m) sessionStorage.setItem(HOST_KEY_STORE, m[1]); } catch (e) {}
     // keep the key off the address bar when the screen is projected
-    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
-    try { return localStorage.getItem(HOST_KEY_STORE) || (m ? m[1] : ''); } catch (e) { return m ? m[1] : ''; }
+    if (location.search || location.hash) history.replaceState(null, '', location.pathname);
+    try { return sessionStorage.getItem(HOST_KEY_STORE) || (m ? m[1] : ''); } catch (e) { return m ? m[1] : ''; }
   }
 
   async function connectLive() {
@@ -686,7 +686,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
         writing = false;
         writeQueued = false;
         live.host = false;
-        try { localStorage.removeItem(HOST_KEY_STORE); } catch (err) {}
+        try { sessionStorage.removeItem(HOST_KEY_STORE); } catch (err) {}
         setSpectator(true);
         setLiveTag('진행자 링크가 맞지 않아요 · 보기 전용', true);
         live.refresh();
