@@ -532,7 +532,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     { name: '빙고판 글씨', points: [10, 10, 20] },
     { name: '딸기 바나나 사과', points: [20] },
     { name: '릴레이 몸으로 말해요', relay: true, points: Array(12).fill(RELAY_POINTS) },
-    { name: '상식 퀴즈', multi: true, points: Array(16).fill(10) },
+    { name: '상식 퀴즈', multi: true, points: Array(12).fill(10) },
     { name: '상자 물건', multi: true, points: [10, 10, 20] },
   ];
   const TOPICS = [
@@ -595,14 +595,16 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
       && s.results.every((a, g) => Array.isArray(a) && a.length === roundCount(g))
       && validPos(s.pos);
   }
-  // Keep the first round and the other games when loading the former three-round game 1.
+  // Preserve retained rounds and other games when loading earlier round counts.
   function migrateState(s) {
-    if (s && Array.isArray(s.results) && Array.isArray(s.results[0]) && s.results[0].length === 3) {
-      s.results[0] = s.results[0].slice(0, roundCount(0));
+    if (!s || !Array.isArray(s.results)) return s;
+    for (const [g, oldCount] of [[0, 3], [QUIZ_GAME, 16]]) {
+      if (!Array.isArray(s.results[g]) || s.results[g].length !== oldCount) continue;
+      s.results[g] = s.results[g].slice(0, roundCount(g));
       for (const key of ['pos', 'resume']) {
         const p = s[key];
-        if (p && p.screen === 'game' && p.g === 0 && Number.isInteger(p.r) && p.r >= roundCount(0) && p.r < 3) {
-          s[key] = { screen: 'game', g: 1, r: 0 };
+        if (p && p.screen === 'game' && p.g === g && Number.isInteger(p.r) && p.r >= roundCount(g) && p.r < oldCount) {
+          s[key] = { screen: 'game', g: g + 1, r: 0 };
         }
       }
     }
