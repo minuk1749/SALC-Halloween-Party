@@ -226,6 +226,7 @@ button{font:inherit;touch-action:manipulation}
   box-shadow:0 7px 0 var(--pumpkin-deep), 0 16px 30px rgba(0,0,0,.35);transition:transform .12s, box-shadow .12s;
 }
 .cta:hover{transform:translateY(-2px)}
+.cta:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
 .cta:active{transform:translateY(5px);box-shadow:0 2px 0 var(--pumpkin-deep)}
 .btn-ghost{
   border:1px solid var(--line);border-radius:12px;padding:10px 16px;cursor:pointer;
@@ -526,6 +527,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
 <script>
 (() => {
   const RELAY_POINTS = 10;
+  const NAME_AWARD_POINTS = 10;
   const GAMES = [
     // multi: several teams can earn candy in one round; the next button records the picked teams
     { name: '쪼개진 과자', multi: true, points: [10] },
@@ -557,6 +559,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
   let confirmWipe = false;   // home screen "전체 초기화" asking for confirmation
   let lastFocus = null;
   let wakeLock = null;
+  let awardStartTimer = 0;
 
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -574,7 +577,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
 
   // ---------- state ----------
   const freshResults = () => GAMES.map((g) => g.points.map(() => null));
-  const freshState = (teams) => ({ teams: teams || DEFAULT_TEAMS.slice(), results: freshResults(), pos: { screen: 'setup' }, resume: null, hideViewerTally: false });
+  const freshState = (teams) => ({ teams: teams || DEFAULT_TEAMS.slice(), results: freshResults(), pos: { screen: 'setup' }, resume: null, hideViewerTally: false, nameAward: null });
 
   function reachedQuiz(pos) {
     return !!pos && (pos.screen === 'final' || (pos.screen === 'game' && pos.g >= QUIZ_GAME));
@@ -585,7 +588,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
 
   function validPos(p) {
     if (!p || typeof p !== 'object') return false;
-    if (p.screen === 'setup' || p.screen === 'final') return true;
+    if (['setup', 'name-award', 'name-award-result', 'final'].includes(p.screen)) return true;
     return p.screen === 'game' && Number.isInteger(p.g) && p.g >= 0 && p.g < GAMES.length
       && Number.isInteger(p.r) && p.r >= 0 && p.r < roundCount(p.g);
   }
@@ -612,6 +615,14 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
   }
   // records saved before multi-select stored a single team number
   function normalize(s) {
+    if (!Object.prototype.hasOwnProperty.call(s, 'nameAward')) {
+      const started = [s.pos, s.resume].some((p) => p && ['game', 'final'].includes(p.screen))
+        || s.results.some((rounds) => rounds.some((res) => res != null));
+      s.nameAward = started ? [] : null;
+    } else if (Array.isArray(s.nameAward)) {
+      s.nameAward = [...new Set(s.nameAward.filter((i) => Number.isInteger(i) && i >= 0 && i < DEFAULT_TEAMS.length))].sort((a, b) => a - b);
+    } else s.nameAward = null;
+    if (s.pos.screen === 'name-award-result' && s.nameAward === null) s.pos = { screen: 'name-award' };
     s.hideViewerTally = s.hideViewerTally === true || reachedQuiz(s.pos) || reachedQuiz(s.resume)
       || s.results.slice(QUIZ_GAME).some((rounds) => rounds.some((res) => res != null));
     GAMES.forEach((game, g) => {
@@ -795,7 +806,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     return table;
   }
   function standings() {
-    const totals = scoreTable().map((row) => row.reduce((a, b) => a + b, 0));
+    const totals = scoreTable().map((row, i) => row.reduce((a, b) => a + b, 0) + nameAwardPoints(i));
     const order = totals.map((t, i) => ({ i, t })).sort((a, b) => b.t - a.t || a.i - b.i);
     order.forEach((o) => { o.rank = 1 + totals.filter((x) => x > o.t).length; });
     return { totals, order, max: Math.max(...totals) };
@@ -827,9 +838,37 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
   }
   const roundsText = (g) => (roundCount(g) === 1 ? '단판 승부' : `${roundCount(g)}라운드`);
 
+  // The award is stored as a set of winners, so revisiting or confirming never adds it twice.
+  function nameAwardPoints(team) {
+    return state.nameAward && state.nameAward.includes(team) ? NAME_AWARD_POINTS : 0;
+  }
+  function confirmNameAward() {
+    if (isSpectator() || state.pos.screen !== 'name-award' || !draft || !draft.awardPicks) return;
+    const winners = [...new Set(draft.awardPicks)].filter((i) => Number.isInteger(i) && i >= 0 && i < DEFAULT_TEAMS.length).sort((a, b) => a - b);
+    if (!winners.length) return;
+    state.nameAward = winners;
+    goTo({ screen: 'name-award-result' });
+    confetti();
+  }
+  function syncNameAwardTimer() {
+    if (isSpectator() || state.pos.screen !== 'name-award-result') {
+      clearTimeout(awardStartTimer);
+      awardStartTimer = 0;
+      return;
+    }
+    if (awardStartTimer) return;
+    awardStartTimer = setTimeout(() => {
+      awardStartTimer = 0;
+      if (!isSpectator() && state.pos.screen === 'name-award-result' && state.nameAward !== null) {
+        goTo({ screen: 'game', g: 0, r: 0 });
+      }
+    }, 2600);
+  }
+
   // ---------- navigation ----------
   function nextPos(p) {
-    if (p.screen === 'setup') return { screen: 'game', g: 0, r: 0 };
+    if (p.screen === 'setup') return { screen: 'name-award' };
+    if (p.screen === 'name-award' || p.screen === 'name-award-result') return { screen: 'game', g: 0, r: 0 };
     if (p.screen === 'final') return null;
     if (p.r < roundCount(p.g) - 1) return { screen: 'game', g: p.g, r: p.r + 1 };
     if (p.g < GAMES.length - 1) return { screen: 'game', g: p.g + 1, r: 0 };
@@ -837,12 +876,14 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
   }
   function prevPos(p) {
     if (p.screen === 'setup') return null;
+    if (p.screen === 'name-award' || p.screen === 'name-award-result') return { screen: 'setup' };
     if (p.screen === 'final') { const g = GAMES.length - 1; return { screen: 'game', g, r: roundCount(g) - 1 }; }
     if (p.r > 0) return { screen: 'game', g: p.g, r: p.r - 1 };
     if (p.g > 0) return { screen: 'game', g: p.g - 1, r: roundCount(p.g - 1) - 1 };
-    return { screen: 'setup' };
+    return { screen: 'name-award' };
   }
   function goTo(to) {
+    if (state.nameAward === null && ['game', 'final'].includes(to.screen)) to = { screen: 'name-award' };
     const from = state.pos;
     if (to.screen === 'setup' && from.screen !== 'setup') state.resume = from;
     if (to.screen === 'final' && from.screen !== 'final') revealCount = 0;
@@ -853,12 +894,13 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     save();
     render(true);
     const enteringGame = to.screen === 'game' && to.r === 0
-      && (from.screen === 'setup' || (from.screen === 'game' && to.g > from.g));
+      && (['setup', 'name-award', 'name-award-result'].includes(from.screen) || (from.screen === 'game' && to.g > from.g));
     if (enteringGame) showIntro(to.g);
   }
   function goNext() {
     if (Date.now() < lockUntil) return;
     const p = state.pos;
+    if (p.screen === 'name-award' && draft && draft.awardPicks) { confirmNameAward(); return; }
     if (p.screen === 'final') { revealNext(); return; }
     const to = nextPos(p);
     if (!to) return;
@@ -920,6 +962,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     renderTop();
     renderStage(animate);
     renderNav();
+    syncNameAwardTimer();
   }
 
   function renderTop() {
@@ -928,6 +971,9 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     if (p.screen === 'game') {
       badge.innerHTML = `<span class="rb-label">ROUND</span><span class="rb-val"><b>${p.r + 1}</b>/${roundCount(p.g)}<small>라운드</small></span>`;
       marquee.innerHTML = `${HOME_BTN}<p class="eyebrow">GAME ${p.g + 1} / ${GAMES.length}</p><h1>${esc(GAMES[p.g].name)}</h1>`;
+    } else if (p.screen === 'name-award' || p.screen === 'name-award-result') {
+      badge.innerHTML = `<span class="rb-label">BONUS</span><span class="rb-val"><b>${NAME_AWARD_POINTS}</b><small>사탕</small></span>`;
+      marquee.innerHTML = `${HOME_BTN}<p class="eyebrow">TEAM NAME AWARD</p><h1>센스 있는 팀명상</h1>`;
     } else if (p.screen === 'final') {
       badge.innerHTML = `<span class="rb-label">ROUND</span><span class="rb-val"><small>모든 게임 끝</small></span>`;
       marquee.innerHTML = `${HOME_BTN}<p class="eyebrow">FINAL</p><h1>최종 결과</h1>`;
@@ -944,6 +990,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     const p = state.pos, stage = $('#stage');
     stage.className = 'stage';
     stage.innerHTML = p.screen === 'setup' ? setupHTML()
+      : p.screen === 'name-award' || p.screen === 'name-award-result' ? nameAwardHTML()
       : p.screen === 'final' ? finalHTML()
       : GAMES[p.g].relay ? relayHTML(p.g, p.r)
       : gameHTML(p.g, p.r);
@@ -953,6 +1000,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
   function navLabel(dir, to) {
     const p = state.pos;
     if (to.screen === 'setup') return ['팀 설정', '팀 이름 바꾸기'];
+    if (to.screen === 'name-award') return ['팀명상', '수상 팀 확인'];
     if (to.screen === 'final') return ['최종 결과', '모든 게임 끝'];
     const same = p.screen === 'game' && to.g === p.g;
     const main = (dir < 0 ? '이전 ' : '다음 ') + (same ? '라운드' : '게임');
@@ -965,8 +1013,9 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
   }
   function renderNav() {
     const p = state.pos;
-    const prev = prevPos(p);
-    const next = p.screen === 'setup' ? null : nextPos(p);
+    const awardScreen = p.screen === 'name-award' || p.screen === 'name-award-result';
+    const prev = awardScreen ? null : prevPos(p);
+    const next = p.screen === 'setup' || awardScreen ? null : nextPos(p);
     const picks = p.screen === 'game' && GAMES[p.g].multi && draft && draft.picks ? draft.picks.length : 0;
     const pb = $('#prevBtn'), nb = $('#nextBtn');
     pb.hidden = !prev;
@@ -974,6 +1023,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     nb.classList.toggle('armed', picks > 0);
     if (prev) pb.innerHTML = navInner(-1, prev);
     if (next) nb.innerHTML = navInner(1, next, picks ? `${picks}개 팀 +${GAMES[p.g].points[p.r]}사탕` : '');
+    $('#gameTrack').hidden = awardScreen || state.nameAward === null;
     $('#gameTrack').innerHTML = GAMES.map((game, g) => {
       const n = roundCount(g);
       const done = state.results[g].filter((x) => x != null).length;
@@ -1033,10 +1083,37 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
       ${confirmWipe
         ? `<div class="setup-actions confirm"><p>모든 점수와 팀 이름을 처음 상태로 되돌릴까요?</p><button type="button" class="btn-ghost" data-action="wipe-cancel">취소</button><button type="button" class="btn-danger" data-action="wipe-confirm">전체 초기화</button></div>`
         : `<div class="setup-actions">
-        <button type="button" class="cta" data-action="start">${resumePos() ? '게임으로 돌아가기' : '게임 시작'}</button>
+        <button type="button" class="cta" data-action="start">${resumePos() ? '진행 화면으로 돌아가기' : '팀명상 선정하고 시작'}</button>
         <button type="button" class="btn-ghost" data-action="fullscreen">전체 화면</button>
         <button type="button" class="btn-ghost danger" data-action="wipe-ask">전체 초기화</button>
       </div>`}`;
+  }
+
+  function nameAwardHTML() {
+    const spectator = isSpectator();
+    const result = state.pos.screen === 'name-award-result';
+    if (!spectator && state.nameAward === null && !draft) draft = { awardPicks: [] };
+    const editing = !spectator && !result && draft && draft.awardPicks;
+    const picks = editing ? draft.awardPicks : (state.nameAward || []);
+    const confirmed = !editing && state.nameAward !== null;
+    const prompt = confirmed
+      ? picks.length ? `팀명상 수상을 축하해요! 각 팀에 ${NAME_AWARD_POINTS}사탕을 지급했어요` : '아직 선정된 수상 팀이 없어요'
+      : spectator ? '가장 멋진 팀명은? 진행자가 수상 팀을 선정하고 있어요'
+      : '가장 멋진 팀명을 골라 주세요. 여러 팀을 선택할 수 있어요!';
+    const cards = DEFAULT_TEAMS.map((_, i) => {
+      const on = picks.includes(i);
+      const badge = on ? `<span class="badge">✓ ${confirmed ? '팀명상' : '선택됨'} +${NAME_AWARD_POINTS}</span>` : '';
+      return editing
+        ? teamTile(i, 'award-pick', on ? 'picked' : '', badge, on)
+        : `<div class="tile${on ? ' picked' : ''}" style="${tc(i)}">${badge}<span class="name">${esc(teamName(i))}</span></div>`;
+    }).join('');
+    const actions = spectator ? '' : editing
+      ? `<p class="prompt" role="status">현재 ${picks.length}팀 선택 · 각 팀에 ${NAME_AWARD_POINTS}사탕</p>
+         <div class="setup-actions"><button type="button" class="cta" data-action="award-confirm"${picks.length ? '' : ' disabled'}>사탕 지급하고 게임 시작</button><button type="button" class="link" data-action="home">팀 이름 수정</button></div>`
+      : `<div class="setup-actions"><button type="button" class="cta" data-action="award-start">1번 게임 시작</button>${result ? '' : '<button type="button" class="link" data-action="award-edit">수상 팀 바꾸기</button>'}</div>`;
+    return `<p class="prompt">${prompt}</p>
+      <div class="team-grid${picks.length ? ' has-pick' : ''}">${cards}</div>
+      ${result ? '<p class="prompt">잠시 후 첫 게임을 시작합니다!</p>' : ''}${actions}`;
   }
 
   function gameHTML(g, r) {
@@ -1146,6 +1223,8 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
   // ---------- tally sheet ----------
   function progressText() {
     const p = state.pos;
+    if (p.screen === 'name-award') return '센스 있는 팀명상을 선정하고 있어요';
+    if (p.screen === 'name-award-result') return '팀명상 수상 팀을 공개했어요';
     if (p.screen === 'game') return `지금 ${p.g + 1}번 게임 「${GAMES[p.g].name}」 ${p.r + 1}/${roundCount(p.g)}라운드`;
     if (p.screen === 'final') return '모든 게임이 끝났어요';
     return '아직 게임 시작 전이에요';
@@ -1156,7 +1235,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     const isFinal = state.pos.screen === 'final';
     const board = order.map((o) => `<li class="board-row" style="${tc(o.i)};--w:${max ? (o.t / max) * 100 : 0}%"><span class="br-rank">${o.rank}</span><span class="br-name"><i class="swatch"></i>${esc(teamName(o.i))}</span><span class="bar"><i></i></span><span class="br-amt">${o.t}${CANDY}</span></li>`).join('');
     const head = GAMES.map((game, g) => `<th scope="col"><span class="gno">${g + 1}</span>${esc(game.name)}</th>`).join('');
-    const rows = DEFAULT_TEAMS.map((_, i) => `<tr><th scope="row"><span class="tname" style="${tc(i)}"><i class="swatch"></i>${esc(teamName(i))}</span></th>${table[i].map((v) => `<td${v ? '' : ' class="zero"'}>${v}</td>`).join('')}<td class="total">${totals[i]}</td></tr>`).join('');
+    const rows = DEFAULT_TEAMS.map((_, i) => `<tr><th scope="row"><span class="tname" style="${tc(i)}"><i class="swatch"></i>${esc(teamName(i))}</span></th><td${nameAwardPoints(i) ? '' : ' class="zero"'}>${nameAwardPoints(i)}</td>${table[i].map((v) => `<td${v ? '' : ' class="zero"'}>${v}</td>`).join('')}<td class="total">${totals[i]}</td></tr>`).join('');
     const actions = isSpectator()
       ? `<div class="sheet-actions"><button type="button" class="btn-ghost" data-action="fullscreen">전체 화면</button></div>`
       : confirmReset
@@ -1164,7 +1243,7 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
       : `<div class="sheet-actions"><button type="button" class="btn-ghost" data-action="edit-teams">팀 이름 바꾸기</button><button type="button" class="btn-ghost" data-action="fullscreen">전체 화면</button><button type="button" class="btn-ghost danger" data-action="reset-ask">처음부터 다시</button></div>`;
     return `<div class="sheet-head"><div><p class="eyebrow">${isFinal ? 'TOTAL' : 'SO FAR'}</p><h2 id="sheetTitle">${isFinal ? '전체 집계' : '중간 집계'}</h2><p class="sheet-sub">${esc(progressText())}</p></div><button type="button" class="close-btn" data-action="modal-close" aria-label="닫기">✕</button></div>
       <ol class="board">${board}</ol>
-      <div class="table-wrap"><table><thead><tr><th scope="col">팀</th>${head}<th scope="col">합계</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th scope="col">팀</th><th scope="col">팀명상</th>${head}<th scope="col">합계</th></tr></thead><tbody>${rows}</tbody></table></div>
       ${actions}`;
   }
   function renderTally() { $('#sheet').innerHTML = tallyHTML(); }
@@ -1255,7 +1334,20 @@ td.total{font-family:var(--font-display);font-size:19px;color:var(--moon)}
     if (isSpectator() && !VIEWER_ACTIONS.has(el.dataset.action)) return;
     const p = state.pos;
     switch (el.dataset.action) {
-      case 'start': goTo(resumePos() || { screen: 'game', g: 0, r: 0 }); break;
+      case 'start': goTo(resumePos() || { screen: 'name-award' }); break;
+      case 'award-pick': {
+        if (p.screen !== 'name-award' || !draft || !draft.awardPicks) break;
+        const t = +el.dataset.team;
+        if (!Number.isInteger(t) || t < 0 || t >= DEFAULT_TEAMS.length) break;
+        const at = draft.awardPicks.indexOf(t);
+        if (at >= 0) draft.awardPicks.splice(at, 1);
+        else draft.awardPicks.push(t);
+        renderStage(false);
+        break;
+      }
+      case 'award-confirm': confirmNameAward(); break;
+      case 'award-start': if (state.nameAward !== null && ['name-award', 'name-award-result'].includes(p.screen)) goTo({ screen: 'game', g: 0, r: 0 }); break;
+      case 'award-edit': if (p.screen === 'name-award' && state.nameAward !== null) { draft = { awardPicks: state.nameAward.slice() }; renderStage(false); } break;
       case 'home': goTo({ screen: 'setup' }); break;
       case 'wipe-ask': confirmWipe = true; renderStage(false); break;
       case 'wipe-cancel': confirmWipe = false; renderStage(false); break;
